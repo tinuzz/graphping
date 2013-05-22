@@ -1,0 +1,238 @@
+#!/usr/bin/python
+
+"""
+Ping-graphite - send ping statistics for multiple hosts to Graphite
+
+Requires: fping, python-daemon
+"""
+
+import sys
+import os
+import signal
+import daemon
+import subprocess
+import re
+import logging
+import logging.handlers
+import errno
+import time
+import socket
+import datetime
+from pprint import pprint, pformat
+
+# ping
+packets = 30
+
+# Graphite
+g_host = 'localhost'
+g_port = 2003
+g_prefix = 'ping'
+
+# System
+fping = '/usr/sbin/fping'
+logfile = '/tmp/ping-graphite.log'
+
+def handle_signal (sig, _frame):
+    signals = dict((k, v) for v, k in signal.__dict__.iteritems() if v.startswith('SIG'))
+    app.logger.info ("Received signal (%s)" % signals[sig])
+
+    if sig == signal.SIGUSR1:
+        app.logger.warning("Setting log level to 'DEBUG'")
+        app.logger.setLevel(logging.DEBUG)
+    else:
+        app.logger.warning ("Going to exit.")
+        if app.ping:
+            app.logger.warning("Terminating ping...")
+            app.ping.terminate()
+            app.ping.communicate()
+        else:
+            app.logger.warning("No ping running.")
+        app.ping = False
+        app.stop = True
+
+class StreamToLogger(object):
+    """
+    Fake file-like stream object that redirects writes to a logger instance.
+    """
+    def __init__(self, logger, log_level=logging.ERROR):
+        self.logger = logger
+        self.log_level = log_level
+        self.linebuf = ''
+
+    def write(self, buf):
+        for line in buf.rstrip().splitlines():
+            self.logger.log(self.log_level, line.rstrip())
+
+class App:
+
+    def __init__(self):
+        self.g_host = g_host
+        self.g_port = g_port
+        self.g_prefix = g_prefix
+        self.logfile = logfile
+        self.daemonize = True
+        self.stop = False
+        self.level = logging.INFO
+
+    def setup_logging(self):
+        os.umask(022)
+        self.logger = logging.getLogger()
+        self.logger.setLevel(self.level)
+        formatter = logging.Formatter('%(asctime)s [%(process)d] %(levelname)s: %(message)s','%Y-%m-%d %H:%M:%S')
+        try:
+            loghandler = logging.handlers.WatchedFileHandler(self.logfile)
+        except IOError:
+            print "Could not open logfile (%s)" % self.logfile
+            return False
+
+        loghandler.setFormatter(formatter)
+        self.logger.addHandler(loghandler)
+
+        if self.daemonize == True:
+           # Redirect stdout and stderr to logger, using StreamToLogger object that handles writes
+            sys.stdout = StreamToLogger(self.logger, logging.INFO)
+            sys.stderr = StreamToLogger(self.logger, logging.ERROR)
+
+        else:
+            # Set up a second loghandler, that writes to stderr
+            loghandler2 = logging.StreamHandler(sys.stderr)
+            loghandler2.setFormatter(formatter)
+            self.logger.addHandler(loghandler2)
+
+        return True
+
+    def median(self, alist):
+        srtd = sorted(alist) # returns a sorted copy
+        mid = len(alist)/2   # remember that integer division truncates
+        if len(alist) % 2 == 0:  # take the avg of middle two
+            return (srtd[mid-1] + srtd[mid]) / 2.0
+        else:
+            return srtd[mid]
+
+    def process_options(self):
+        self.targets = sys.argv[1:]
+        if not self.targets:
+            self.usage()
+
+    def usage(self):
+        print "Usage: ping-graphite <target> [<target> ...]"
+        sys.exit(2)
+
+    def main(self):
+
+        if self.setup_logging():
+            cmd = [ fping, '-c', str(packets) ] + self.targets
+
+            while not self.stop:
+
+                rtt = {}
+                sry = {}
+                for t in self.targets:
+                    rtt[t] = []
+                    sry[t] = {}
+
+                self.logger.info("Fpinging %d targets x %d packets" % (len(self.targets), packets))
+                self.ping = subprocess.Popen(cmd, bufsize=256, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                while not self.stop:
+                    # A USR1 signal causes an 'Interrupted system call' that we should
+                    # handle gracefully
+                    try:
+                        raw_line = self.ping.stdout.readline()
+                    except IOError, e:
+                        if e.errno == errno.EINTR:
+                            continue
+
+                    # If 'fping' is done/gone, terminate. This also catches a SIGINT.
+                    if raw_line == '':
+                        break
+
+                    l = raw_line.rstrip()
+
+                    # latinum : [0], 84 bytes, 6.46 ms (6.46 avg, 0% loss)
+                    m = re.match('([^ ]*)\s* : \[\d+\]+, \d+ bytes, (.*) ms', l)
+                    if m:
+                        #sys.stderr.write('.')
+                        #sys.stderr.flush()
+                        rtt[m.group(1)].append(float(m.group(2)))
+                        continue
+
+                    # latinum.isaac.local : xmt/rcv/%loss = 30/30/0%, min/avg/max = 5.99/6.30/6.67
+                    m = re.match('([^ ]*)\s* : xmt/rcv/%loss = \d+/\d+/(\d+)%, min/avg/max = (.*)/(.*)/(.*)', l)
+                    if m:
+                        #sys.stderr.write('*')
+                        #sys.stderr.flush()
+                        t = m.group(1)
+                        sry[t]['loss'] = int(m.group(2))
+                        sry[t]['min'] = float(m.group(3))
+                        sry[t]['avg'] = float(m.group(4))
+                        sry[t]['max'] = float(m.group(5))
+
+                if self.ping:
+                    ret = self.ping.poll()
+                    if not ret is None:
+                        self.logger.info("Subprocess exited with status %d" % ret)
+                    self.ping.communicate()
+                self.ping = False
+
+                # Escape
+                if self.stop:
+                    return
+
+                # Process and send the results
+                ts = time.time()
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.connect((g_host, g_port))
+
+                for target,summary in sry.items():
+                    safe_target = target.replace('.', '_')
+                    m_loss = self.g_prefix + '.' + safe_target + '.packetloss'
+                    m_median = self.g_prefix + '.' + safe_target + '.medianrtt'
+                    m_min = self.g_prefix + '.' + safe_target + '.minrtt'
+                    m_avg = self.g_prefix + '.' + safe_target + '.avgrtt'
+                    m_max = self.g_prefix + '.' + safe_target + '.maxrtt'
+
+                    try:
+                        self.logger.info("Sending data for %s. ts=%d => %s" % (safe_target, ts,
+                            datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')))
+                        s.send("%s %d %d\n" % (m_loss, summary['loss'], ts))
+                        s.send("%s %.2f %d\n" % (m_median, self.median(rtt[target]), ts))
+                        s.send("%s %.2f %d\n" % (m_min, summary['min'], ts))
+                        s.send("%s %.2f %d\n" % (m_avg, summary['avg'], ts))
+                        s.send("%s %.2f %d\n" % (m_max, summary['max'], ts))
+                    except Exception:
+                        self.logger.info("Could not send! Summary:")
+                        self.logger.info(pformat(summary))
+
+                s.close()
+
+                # Wait for the next minute
+                self.logger.info("Sleeping")
+                m0 = time.strftime('%M')
+                while time.strftime('%M') == m0 and not self.stop:
+                    time.sleep(3)
+
+            return
+
+if __name__ == "__main__":
+
+    app = App()
+    app.process_options()
+
+    if app.daemonize == True:
+        context = daemon.DaemonContext()
+        context.signal_map = {
+            signal.SIGTERM: handle_signal,
+            signal.SIGINT: handle_signal,
+            signal.SIGUSR1: handle_signal
+        }
+
+        with context:
+            app.main()
+            app.logger.warning ("Done.")
+
+    else:
+        signal.signal (signal.SIGTERM, handle_signal)
+        signal.signal (signal.SIGINT, handle_signal)
+        signal.signal (signal.SIGUSR1, handle_signal)
+        app.main()
+        app.logger.warning ("Done.")
