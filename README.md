@@ -67,4 +67,4 @@ logfile = '/tmp/ping-graphite.log'
 Usage
 -----
 
-`./graphping &lt;target&grt; [&lt;target&grt; ...]`
+`./graphping <target> [<target> ...]`
