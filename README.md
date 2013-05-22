@@ -39,8 +39,9 @@ Requirements
 Configuration
 -------------
 
-Set up a Carbon/Whisper retention schema for the ping statistics, keeping one
-sample per minute for some time, and optionally some aggregations:
+Set up a [Carbon/Whisper retention schema](http://graphite.readthedocs.org/en/latest/config-carbon.html)
+for the ping statistics, keeping one sample per minute for some time, and
+optionally some aggregations:
 
 ```
 [ping]
@@ -64,6 +65,15 @@ fping = '/usr/sbin/fping'
 logfile = '/tmp/ping-graphite.log'
 ```
 
+If you want to run the program in the foreground instead of daemonized, search
+the program for a line that says
+
+```
+self.daemonize = True
+```
+
+and change the value to `False`.
+
 Usage
 -----
 
@@ -74,4 +84,4 @@ License
 
 Graphping is licensed under the Apache License, version 2.0.  A copy of the
 license can be found in the 'COPYING' file and
-[on the web](http://www.apache.org/licenses/LICENSE-2.0)
+[on the web](http://www.apache.org/licenses/LICENSE-2.0).
