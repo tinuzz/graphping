@@ -32,9 +32,9 @@ of which are gauges:
 Requirements
 ------------
 
-* fping
-* python-daemon
-* A Graphite server
+* [fping](http://www.fping.org/) ([Debian](http://packages.debian.org/wheezy/fping))
+* [python-daemon](https://pypi.python.org/pypi/python-daemon/) ([Debian](http://packages.debian.org/wheezy/python-daemon))
+* A [Graphite](http://graphite.wikidot.com/) server
 
 The program uses regular expressions to get useful numbers from the fping ouput, so
 it depends on specific formatting of the output. The following fping programs are
