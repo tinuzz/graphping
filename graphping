@@ -34,7 +34,7 @@ import socket
 import datetime
 from pprint import pprint, pformat
 
-# ping
+# number of ping packets to send
 packets = 30
 
 # Graphite
@@ -44,7 +44,7 @@ g_prefix = 'ping'
 
 # System
 fping = '/usr/sbin/fping'
-logfile = '/tmp/ping-graphite.log'
+logfile = '/tmp/graphping.log'
 
 def handle_signal (sig, _frame):
     signals = dict((k, v) for v, k in signal.__dict__.iteritems() if v.startswith('SIG'))
