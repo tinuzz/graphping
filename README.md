@@ -36,6 +36,27 @@ Requirements
 * python-daemon
 * A Graphite server
 
+The program uses regular expressions to get useful numbers from the fping ouput, so
+it depends on specific formatting of the output. The following fping programs are
+known to be compatible:
+
+* version 3.4 on RHEL 6.4
+* version 3.2 on Debian Wheezy
+
+The output should look like this (for 2 hosts, 3 packets per host):
+
+```
+www.github.io  : [0], 84 bytes, 4.26 ms (4.26 avg, 0% loss)
+www.google.com : [0], 84 bytes, 8.35 ms (8.35 avg, 0% loss)
+www.github.io  : [1], 84 bytes, 3.25 ms (3.75 avg, 0% loss)
+www.google.com : [1], 84 bytes, 7.84 ms (8.09 avg, 0% loss)
+www.github.io  : [2], 84 bytes, 3.32 ms (3.61 avg, 0% loss)
+www.google.com : [2], 84 bytes, 7.86 ms (8.01 avg, 0% loss)
+
+www.github.io  : xmt/rcv/%loss = 3/3/0%, min/avg/max = 3.25/3.61/4.26
+www.google.com : xmt/rcv/%loss = 3/3/0%, min/avg/max = 7.84/8.01/8.35
+```
+
 Configuration
 -------------
 
